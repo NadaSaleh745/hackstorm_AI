@@ -39,7 +39,7 @@ INTENT_PROMPT = f"""Extract intent and facts from the user message.
 
 Intent must be one of the following exactly:
 CHITCHAT: User is just making conversation, greeting, providing general facts/preferences, or just chatting about themselves or about finance advice without requesting a database operation.
-ADD: User explicitly requests to create/add records to the inventory database (e.g. Spending, Loan, Lend, Purchase, Transfer).
+ADD: User explicitly requests to create/add records to the financial database (e.g. Spending, Loan, Lend, Purchase, Transfer).
 UPDATE: User explicitly requests modifying database records. Or the user mentions a fact that needs to be updated.
 DELETE: User explicitly requests removing database records. Or the user mentions a fact that needs to be removed.
 INQUIRE: User asks a specific question about his data or past transactions, spending, loans, installments, etc. that requires querying the database.
@@ -172,7 +172,7 @@ Return ONLY valid JSON — no markdown, no explanation:
 }}
 """
 
-RESPONSE_PROMPT = ("Given the user question, the result rows, and user context (facts, preferences), briefly explain what you found in a friendly, clear, and natural way."
+RESPONSE_PROMPT = ("Given the user question, the query results, and user context (facts, preferences), briefly explain what you found in a friendly, clear, and natural way."
                    "Use bullets for each item, include only important details, and optionally add insights or observations."
                    "Do NOT mention columns or functions."
                   )

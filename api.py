@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     intent: Optional[str] = None
-    sql_query: Optional[str] = None
+    mongo_query: Optional[str] = None
     error: Optional[str] = None
 
 @app_api.post("/chat", response_model=ChatResponse)
@@ -50,7 +50,7 @@ async def chat_endpoint(request: ChatRequest):
         return ChatResponse(
             response=result["messages"][-1].content,
             intent=result.get("intent"),
-            sql_query=result.get("sql_query"),
+            mongo_query=result.get("query"),
             error=result.get("error")
         )
         

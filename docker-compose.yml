@@ -1,0 +1,28 @@
+services:
+  redis-database:
+    container_name: fin-database
+    hostname: fin-database
+    image: redis:latest
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+
+  ai-agent:
+    build: .
+    container_name: hackstorm-ai
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis-database:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - REDIS_URI=redis://fin-database:6379
+    volumes:
+      - .:/app
