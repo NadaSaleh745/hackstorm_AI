@@ -96,7 +96,7 @@ def intent_node(state: AgentState, config: RunnableConfig, store: BaseStore):
         "intent": intent,
         "semantic_memory": semantic_memory,
         "context_data": {},
-        "sql_result": None,
+        "query_result": None,
         "error": None,
         "task_type": None,
         "steps": []
@@ -182,19 +182,6 @@ def inquire_node(state: AgentState):
         print(f"{item}: {state[item]}")
 
     return {"context_data": context_data}
-
-
-def _execute_query(query: str):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(query)
-        result = cursor.fetchall()
-        conn.close()
-        return result
-    except Exception as e:
-        print(f"Query error: {e}")
-        return []
 
 
 def _execute_query(query: dict):
@@ -413,7 +400,7 @@ def query_executor_node(state: AgentState):
 
 
 def query_corrector_node(state: AgentState):
-    """Refines the SQL if an error occurred."""
+    """Refines the MongoDB query if an error occurred."""
     error = state["error"]
     previous_query = state["query", ""]
     system_prompt = SystemMessage(content=REPLAN_PROMPT)

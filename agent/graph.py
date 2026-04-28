@@ -1,8 +1,8 @@
 import os
 from langchain_openai import OpenAIEmbeddings
 from langgraph.graph import StateGraph, END
-from hackstorm_AI.agent.state import AgentState
-from hackstorm_AI.agent.nodes import (
+from agent.state import AgentState
+from agent.nodes import (
     query_executor_node, query_corrector_node,
     responder_node, intent_node, chitchat_node,
     inquiry_planner, inquire_node, inquiry_responder_node, add_node,

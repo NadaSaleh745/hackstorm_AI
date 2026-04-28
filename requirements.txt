@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pydantic
+langchain
+langchain-openai
+langgraph
+python-dotenv
+redis
+openai
+langchain-community
+langgraph-checkpoint-redis
+# Some versions of langgraph require this for the store
+langgraph-sdk
+pymongo
+
