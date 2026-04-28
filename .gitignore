@@ -1,0 +1,5 @@
+/agent/.env
+__pycache__/
+*.py[codz]
+.DS_Store
+idea/
