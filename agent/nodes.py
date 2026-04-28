@@ -12,7 +12,7 @@ from .state import AgentState
 from .prompts import (
     REPLAN_PROMPT, RESPONSE_PROMPT, INTENT_PROMPT, get_schema_string,
     CHITCHAT_PROMPT, PLANNER_PROMPT, ADD_PROMPT, UPDATE_PROMPT,
-    DELETE_PROMPT, INQUIRY_RESPONSE_PROMPT, DB_PATH, DB_NAME
+    DELETE_PROMPT, INQUIRY_RESPONSE_PROMPT, DB_NAME
 )
 from langgraph.store.base import BaseStore
 

@@ -1,4 +1,3 @@
-import sqlite3
 from pathlib import Path
 from pymongo import MongoClient
 import os
