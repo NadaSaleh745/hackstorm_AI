@@ -1,21 +1,29 @@
+import datetime
 import json
-import sqlite3
+import os
 import uuid
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from pymongo import MongoClient
+
 from .state import AgentState
 from .prompts import (
     REPLAN_PROMPT, RESPONSE_PROMPT, INTENT_PROMPT, get_schema_string,
     CHITCHAT_PROMPT, PLANNER_PROMPT, ADD_PROMPT, UPDATE_PROMPT,
-    DELETE_PROMPT, INQUIRY_RESPONSE_PROMPT, DB_PATH
+    DELETE_PROMPT, INQUIRY_RESPONSE_PROMPT, DB_PATH, DB_NAME
 )
 from langgraph.store.base import BaseStore
 
 
 load_dotenv()
 llm = ChatOpenAI(model='gpt-5.4-mini', temperature=0)
+
+def get_mongo_client():
+    """Returns a MongoDB client connection."""
+    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    return MongoClient(mongo_uri)
 
 
 def intent_node(state: AgentState, config: RunnableConfig, store: BaseStore):
@@ -98,9 +106,8 @@ def intent_node(state: AgentState, config: RunnableConfig, store: BaseStore):
 
 def inquiry_planner(state: AgentState):
     """Plans the steps needed to answer the user's inquiry.
-
     The LLM receives the real DB schema and returns a list of steps where
-    every step contains a descriptive name AND the actual SQL query to run.
+    every step contains a descriptive name.
     No hardcoded step registry needed in the execution layer.
     """
     print("start inquiry_planner")
@@ -110,14 +117,18 @@ def inquiry_planner(state: AgentState):
     # Dynamically fetch existing user categories
     categories = []
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT Category FROM Transactions WHERE Category IS NOT NULL UNION SELECT DISTINCT Category FROM Budgets WHERE Category IS NOT NULL")
-        categories = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        client = get_mongo_client()
+        db = client[DB_NAME]
+
+        # Get distinct categories from transactions and budgets
+        txn_categories = db.transactions.distinct("category")
+        budget_categories = db.budgets.distinct("category")
+        categories = list(set(txn_categories + budget_categories))
+        client.close()
+
     except Exception as e:
         print(f"Error fetching categories: {e}")
-        
+
     cat_context = f"\n\nExisting user categories in database: {categories}" if categories else ""
     
     human_prompt = HumanMessage(content=f"User Request: {state['question']}{cat_context}")
@@ -132,11 +143,11 @@ def inquiry_planner(state: AgentState):
 
         parsed = json.loads(result.strip())
         task_type = parsed.get("task_type", "simple_query")
-        # Each step is expected to be {"name": str, "sql": str}
+        # Each step is expected to be {"name": str, "query": str}
         steps: list[dict] = parsed.get("steps", [])
 
-        # Defensive: skip any step that is missing its sql field
-        steps = [s for s in steps if isinstance(s, dict) and s.get("sql")]
+        # Defensive: skip any step that is missing its query field
+        steps = [s for s in steps if isinstance(s, dict) and s.get("query")]
 
     except Exception as e:
         print(f"Error parsing planner response: {e}\nRaw output:\n{result}")
@@ -148,12 +159,7 @@ def inquiry_planner(state: AgentState):
 
 
 def inquire_node(state: AgentState):
-    """Executes every SQL step produced by inquiry_planner.
-
-    Because each step carries its own SQL query, there is no if/elif
-    dispatch — the executor is fully dynamic and requires zero hardcoding
-    when new queries are added.
-    """
+    """Executes every MongoDB step produced by inquiry_planner."""
     print("start inquire_node")
 
     # Run the planner inline if steps aren't in state yet
@@ -166,9 +172,9 @@ def inquire_node(state: AgentState):
 
     for step in steps:
         name = step.get("name", "unnamed_step")
-        sql  = step.get("sql", "")
-        print(f"Executing step '{name}': {sql}")
-        context_data[name] = _execute_query(sql)
+        query  = step.get("query", "")
+        print(f"Executing step '{name}': {query}")
+        context_data[name] = _execute_query(query)
 
     print("stop inquire_node")
 
@@ -185,6 +191,53 @@ def _execute_query(query: str):
         cursor.execute(query)
         result = cursor.fetchall()
         conn.close()
+        return result
+    except Exception as e:
+        print(f"Query error: {e}")
+        return []
+
+
+def _execute_query(query: dict):
+    """Executes a MongoDB query."""
+    try:
+        client = get_mongo_client()
+        db = client[DB_NAME]
+
+        collection_name = query.get("collection")
+        operation = query.get("operation", "find")
+
+        if not collection_name:
+            return []
+
+        collection = db[collection_name]
+
+        if operation == "find":
+            filter_query = query.get("filter", {})
+            projection = query.get("projection")
+            limit = query.get("limit", 100)
+            sort = query.get("sort")
+
+            cursor = collection.find(filter_query, projection).limit(limit)
+            if sort:
+                cursor = cursor.sort(sort)
+
+            result = list(cursor)
+        elif operation == "aggregate":
+            pipeline = query.get("pipeline", [])
+            result = list(collection.aggregate(pipeline))
+        elif operation == "count":
+            filter_query = query.get("filter", {})
+            result = [{"count": collection.count_documents(filter_query)}]
+        else:
+            result = []
+
+
+        # Convert ObjectId to string for JSON serialization
+        for doc in result:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+
+        client.close()
         return result
     except Exception as e:
         print(f"Query error: {e}")
@@ -246,7 +299,7 @@ def add_node(state: AgentState):
     print(response)
     print("stop add")
     return {
-        "sql_query": response.content.strip(),
+        "query": response.content.strip(),
     }
 
 
@@ -267,7 +320,7 @@ def update_node(state: AgentState):
     """)
     response = llm.invoke([system_prompt, human_prompt])
     return {
-        "cypher": response.content.strip(),
+        "query": response.content.strip(),
     }
 
 
@@ -288,43 +341,88 @@ def delete_node(state: AgentState):
     """)
     response = llm.invoke([system_prompt, human_prompt])
     return {
-        "cypher": response.content.strip(),
+        "query": response.content.strip(),
     }
 
 
-def sql_executor_node(state: AgentState):
-    """Executes the SQL query against the database."""
-    sql_query = state["sql_query"]
+def query_executor_node(state: AgentState):
+    """Executes the NoSQL query against MongoDB."""
+    query_str = state["query"]
+
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        result = cursor.fetchall()
-        conn.commit()
-        conn.close()
+        # Parse the query string to JSON
+        if "```json" in query_str:
+            query_str = query_str.split("```json")[1].split("```")[0]
+        elif "```" in query_str:
+            query_str = query_str.split("```")[1].split("```")[0]
+
+        query = json.loads(query_str.strip())
+
+        client = get_mongo_client()
+        db = client[DB_NAME]
+
+        collection_name = query.get("collection")
+        operation = query.get("operation")
+
+        if not collection_name or not operation:
+            raise ValueError("Query must contain 'collection' and 'operation' fields")
+
+        collection = db[collection_name]
+        result = None
+
+        if operation == "insert_one":
+            document = query.get("document", {})
+            # Add timestamp
+            document["created_at"] = datetime.utcnow()
+            result = collection.insert_one(document)
+            result = {"inserted_id": str(result.inserted_id), "acknowledged": result.acknowledged}
+
+        elif operation == "update_one":
+            filter_query = query.get("filter", {})
+            update = query.get("update", {})
+            result = collection.update_one(filter_query, update)
+            result = {"matched_count": result.matched_count, "modified_count": result.modified_count}
+
+        elif operation == "delete_one":
+            filter_query = query.get("filter", {})
+            result = collection.delete_one(filter_query)
+            result = {"deleted_count": result.deleted_count}
+
+        elif operation == "find":
+            filter_query = query.get("filter", {})
+            result = list(collection.find(filter_query).limit(10))
+            # Convert ObjectId to string
+            for doc in result:
+                if "_id" in doc:
+                    doc["_id"] = str(doc["_id"])
+
+        client.close()
 
         return {
             **state,
-            "sql_result": result,
+            "query_result": result,
             "error": None,
         }
     except Exception as e:
+        print(f"Execution error: {e}")
         return {
             **state,
-            "sql_result": None,
+            "query_result": None,
             "error": str(e),
         }
 
-def sql_corrector_node(state: AgentState):
+
+def query_corrector_node(state: AgentState):
     """Refines the SQL if an error occurred."""
     error = state["error"]
+    previous_query = state["query", ""]
     system_prompt = SystemMessage(content=REPLAN_PROMPT)
-    human_prompt = HumanMessage(content=f"Here is the SQL error:\n{error}")
+    human_prompt = HumanMessage(content=f"Previous query:\n{previous_query}\n\nError:\n{error}")
     response = llm.invoke([system_prompt, human_prompt])
-    sql_query = response.content.strip()
+    query = response.content.strip()
     return {
         **state,
-        "sql_query": sql_query,
+        "query": query,
         "error": None,
     }
 
@@ -340,9 +438,9 @@ def chitchat_node(state: AgentState):
     }
 
 def responder_node(state: AgentState):
-    sql_result = state["sql_result"]
+    query_result = state["query_result"]
     system_prompt = SystemMessage(content=RESPONSE_PROMPT)
-    human_prompt = HumanMessage(content=f"SQL Query:{state['sql_query']} Result Rows:{sql_result}")
+    human_prompt = HumanMessage(content=f"Query:{state['query']} Result Rows:{query_result}")
     response = llm.invoke([system_prompt, human_prompt])
     return {
         "messages": [response],

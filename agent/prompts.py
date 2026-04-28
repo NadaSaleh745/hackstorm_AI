@@ -1,27 +1,36 @@
 import sqlite3
 from pathlib import Path
+from pymongo import MongoClient
+import os
 
-def get_schema_string(db_path: str) -> str:
-    """Connects to the DB and returns the CREATE TABLE statements."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("""
-            SELECT sql
-            FROM sqlite_master
-            WHERE type='table'
-            AND name NOT LIKE 'sqlite_%';
-        """)
+def get_schema_string(db_name: str = "financial_assistant") -> str:
+    """Connects to MongoDB and returns collection schemas."""
+    try:
+        mongo_uri = os.getenv("MONGO_URI")
+        client = MongoClient(mongo_uri)
+        db = client[db_name]
 
-    tables = cursor.fetchall()
-    conn.close()
+        # Get all collections
+        collections = db.list_collection_names()
 
-    schema = "\n\n".join(table[0] for table in tables if table[0] is not None)
-    return schema
+        schema_parts = []
+        for collection_name in collections:
+            # Get sample document to infer schema
+            sample = db[collection_name].find_one()
+            if sample:
+                fields = list(sample.keys())
+                schema_parts.append(f"Collection: {collection_name}\nFields: {', '.join(fields)}")
+
+        client.close()
+        return "\n\n".join(schema_parts)
+    except Exception as e:
+        print(f"Error fetching MongoDB schema: {e}")
+        return "Schema unavailable"
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = PROJECT_ROOT / "financial_assistant.db"
-SCHEMA = get_schema_string(str(DB_PATH))
+DB_NAME = "financial_assistant"
+SCHEMA = get_schema_string(DB_NAME)
 
 SCHEMA_PROMPT = f"Database Schema:\n{SCHEMA}"
 
@@ -43,7 +52,7 @@ for example:
 User: I received a $200 gift from my grandma.
 Then this should be an ADD intent.
 User: I no longer go dining out.
-Then this should be a delete intent (delete dinging out budget)
+Then this should be a delete intent (delete dining out budget)
 And so on.
 
 Check if user mentioned any personal identification, fact or preferences about themselves - such as about:
@@ -91,58 +100,49 @@ CHITCHAT_PROMPT = ("You are a friendly financial assistant."
                    "Do not mention databases or internal operations."
                 )
 
-simple_query_prompt = ("You are a SQL expert expert. Given a question or an inquire, generate a SQL query that"
-                  "can retrieve the necessary information from the database."
-                  f"Use ONLY the schema below to generate SQL queries."
-                  f"{SCHEMA_PROMPT}"
-                  "The conversation history is provided. Use it to resolve any pronouns or references (e.g. 'their', 'its', 'the same one')."
-                  "Assume the current user's UserId is 1 and use it as a literal in your queries (e.g., WHERE UserId = 1)."
-                  "Generate a valid SQL query for this intent. Return ONLY the SQL query."
-                  "CRITICAL: NO PARAMETER BINDINGS! Do not use '?' or '%s'. ALWAYS use the literal value 1 for UserId."
-                  "Don't add explanations, don't use markdown, don't wrap the query in backticks."
-                  "Do not alter the tables or columns, do not drop any too."
-                  )
 
-
-ADD_PROMPT = ("You are a SQL expert expert. Given a statement, generate a SQL query that can "
+ADD_PROMPT = ("You are a MongoDB expert. Given a statement, generate a MongoDB query that can "
               "add the necessary information to the database."
-              f"Use ONLY the schema below to generate SQL queries."
+              f"Use ONLY the schema below to generate MongoDB queries."
               f"{SCHEMA_PROMPT}"
-              "Generate a valid SQL query for this intent. Return ONLY the SQL query."
+              "Generate a valid MongoDBquery for this intent. Return ONLY valid JSON."
               "The conversation history is provided. Use it to resolve any pronouns or references (e.g. 'their', 'its', 'the same one')."
-              "CRITICAL: NO PARAMETER BINDINGS! Do not use '?' or '%s'. ALWAYS use the literal value 1 for UserId."
+              "Return the query as a Python dictionary/JSON format that can be used with PyMongo."
+              "Format: {{\"collection\": \"collection_name\", \"operation\": \"insert_one\", \"document\": {{...}}}}"
               "Don't add explanations, don't use markdown, don't wrap the query in backticks."
-              "Do not alter the tables or columns, do not drop any too."
+              "Do not alter the collections or fields, do not drop any too."
               )
 
 
-UPDATE_PROMPT = ("You are a SQL expert expert. Given a statement, generate a SQL query that "
+UPDATE_PROMPT = ("You are a MongoDBexpert expert. Given a statement, generate a MongoDBquery that "
                  "can update the database record or value with the necessary information."
-                 f"Use ONLY the schema below to generate SQL queries."
+                 f"Use ONLY the schema below to generate MongoDBqueries."
                  f"{SCHEMA_PROMPT}"
                  "The conversation history is provided. Use it to resolve any pronouns or references (e.g. 'their', 'its', 'the same one')."
-                 "Generate a valid SQL query for this intent. Return ONLY the SQL query."
-                 "CRITICAL: NO PARAMETER BINDINGS! Do not use '?' or '%s'. ALWAYS use the literal value 1 for UserId."
+                 "Generate a valid MongoDB query for this intent. Return ONLY valid JSON."
+                 "Return the query as a Python dictionary/JSON format that can be used with PyMongo."
+                 "Format: {{\"collection\": \"collection_name\", \"operation\": \"update_one\", \"filter\": {{...}}, \"update\": {{\"$set\": {{...}}}}}}"
                  "Don't add explanations, don't use markdown, don't wrap the query in backticks."
-                 "Do not alter the tables or columns, do not drop any too."
+                 "Do not alter the collections or fields, do not drop any too."
                  )
 
-DELETE_PROMPT = ("You are a SQL expert expert. Given a statement, generate a SQL query that can "
+DELETE_PROMPT = ("You are a MongoDB expert. Given a statement, generate a MongoDB query that can "
                  "remove the necessary information from the database."
-                 f"Use ONLY the schema below to generate SQL queries."
+                 f"Use ONLY the schema below to generate MongoDB queries."
                  f"{SCHEMA_PROMPT}"
                  "The conversation history is provided. Use it to resolve any pronouns or references (e.g. 'their', 'its', 'the same one')."
-                 "Generate a valid SQL query for this intent. Return ONLY the SQL query."
-                 "CRITICAL: NO PARAMETER BINDINGS! Do not use '?' or '%s'. ALWAYS use the literal value 1 for UserId."
+                 "Generate a valid MongoDBquery for this intent. Return ONLY valid JSON."
+                 "Return the query as a Python dictionary/JSON format that can be used with PyMongo."
+                 "Format: {{\"collection\": \"collection_name\", \"operation\": \"delete_one\", \"filter\": {{...}}}}"
                  "Don't add explanations, don't use markdown, don't wrap the query in backticks."
-                 "Do not alter the tables or columns, do not drop any too."
+                 "Do not alter the collections or fields, do not drop any too."
                  )
 
-REPLAN_PROMPT = "You're an expert SQL assistant. Given the error message, replan the SQL query until it works."
+REPLAN_PROMPT = "You're an expert MongoDB assistant. Given the error message, replan the MongoDB query until it works. Return the query in the same JSON format."
 
 PLANNER_PROMPT = f"""
 You are an expert inquiry planner for a financial assistant.
-Analyze the user's request and break it into a sequence of SQL queries needed to fully answer it.
+Analyze the user's request and break it into a sequence of MongoDB queries needed to fully answer it.
 
 Database Schema:
 {SCHEMA}
@@ -154,23 +154,21 @@ Task Types:
 - budget_tracking  : Comparing spending against set budgets.
 
 Rules:
-- Each step must have a unique descriptive "name" and a valid SQLite "sql" query.
-- Write SQL that targets the exact tables and columns from the schema above.
-- Do NOT invent table names or columns that do not exist in the schema.
-- IMPORTANT: When checking categories, closely map the user's words (e.g. "transportation" or "renting") to the closest match in the 'Existing user categories' provided in the input, and use it exactly in the SQL.
-- When searching by names or descriptions, use permissive matching with `LIKE '%word%'` instead of strict equality.
-- Use SQLite-compatible date functions (e.g. date('now', '-7 days')).
-- CRITICAL: NO PARAMETER BINDINGS! Do not use '?' or '%s'. ALWAYS use the literal value 1 for UserId.
+- Each step must have a unique descriptive "name" and a valid MongoDB query.
+- Write MongoDB queries that target the exact collections and fields from the schema above.
+- Do NOT invent collection names or fields that do not exist in the schema.
+- IMPORTANT: When checking categories, closely map the user's words (e.g. "transportation" or "renting") to the closest match in the 'Existing user categories' provided in the input.
+- When searching by text, use MongoDB regex matching for flexible searches.
+- Use MongoDB date operators for date filtering (e.g. {{"$gte": ISODate(...)}}).
 - Return only the steps genuinely needed — do not pad with unnecessary queries.
-- When filtering by textual categories or descriptions, ALWAYS use permissive matching with LIKE '%...%' and LOWER() instead of strict equality (=), to account for variations (e.g. LOWER(Category) LIKE '%transport%')."
-
+- Each query should be in the format: {{\"collection\": \"...\", \"operation\": \"find\", \"filter\": {{...}}, \"projection\": {{...}}}}
 
 Return ONLY valid JSON — no markdown, no explanation:
 {{
   "task_type": "...",
   "steps": [
-    {{"name": "descriptive_name", "sql": "SELECT ..."}},
-    {{"name": "another_step",     "sql": "SELECT ..."}}
+    {{"name": "descriptive_name", "query": {{...}}}},
+    {{"name": "another_step",     "query": {{...}}}}
   ]
 }}
 """
@@ -181,14 +179,14 @@ RESPONSE_PROMPT = ("Given the user question, the result rows, and user context (
                   )
 
 INQUIRY_RESPONSE_PROMPT = """You are a friendly financial assistant.
-The user asked a question and you ran one or more SQL queries to answer it.
+The user asked a question and you ran one or more MongoDB queries to answer it.
 Below are the results of each query step.
 
 Summarize the findings in a clear, natural, and concise way:
 - Use bullet points for multiple items.
 - Group related data together where it makes sense.
 - Add one or two observations or insights if they are helpful.
-- Do NOT mention SQL, tables, columns, or internal steps.
+- Do NOT mention MongoDB, collections, fields, or internal steps.
 - Do NOT make up data that isn't in the results.
 
 User question: {question}

@@ -3,7 +3,7 @@ from langchain_openai import OpenAIEmbeddings
 from langgraph.graph import StateGraph, END
 from hackstorm_AI.agent.state import AgentState
 from hackstorm_AI.agent.nodes import (
-    sql_executor_node, sql_corrector_node,
+    query_executor_node, query_corrector_node,
     responder_node, intent_node, chitchat_node,
     inquiry_planner, inquire_node, inquiry_responder_node, add_node,
     update_node, delete_node
@@ -12,8 +12,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.base import IndexConfig
 from langgraph.store.redis import RedisStore
 from langgraph.checkpoint.redis import RedisSaver
-
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -64,8 +62,8 @@ workflow = StateGraph(AgentState)
 # Existing nodes
 workflow.add_node("intent",    intent_node)
 workflow.add_node("chitchat",  chitchat_node)
-workflow.add_node("executor",  sql_executor_node)
-workflow.add_node("corrector", sql_corrector_node)
+workflow.add_node("executor",  query_executor_node)
+workflow.add_node("corrector", query_corrector_node)
 workflow.add_node("responder", responder_node)
 workflow.add_node("add", add_node)
 workflow.add_node("update", update_node)
